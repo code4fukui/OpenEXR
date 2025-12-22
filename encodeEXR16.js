@@ -13,14 +13,17 @@ const textEncoder = new TextEncoder();
  * Encode OpenEXR (single-part scanline, RGBA HALF/float16)
  * @param {number} width
  * @param {number} height
- * @param {Float16Array|Float32Array} rgbaInterleaved - length = width*height*4 (R,G,B,A)
+ * @param {Float16Array|Float32Array|Uint8Array} rgbaInterleaved - length = width*height*4 (R,G,B,A)
  * @param {object} [opts]
  * @param {"NONE"|"ZIPS"|"ZIP"} [opts.compression="NONE"]
  * @returns {Uint8Array}
  */
 export function encodeEXR_RGBA16F(width, height, rgbaInterleaved, opts = {}) {
   const { compression = "ZIP" } = opts;
-
+  if (rgbaInterleaved instanceof Uint8Array || rgbaInterleaved instanceof Uint8ClampedArray) {
+    rgbaInterleaved = u8tof16(rgbaInterleaved);
+  }
+  console.log(rgbaInterleaved);
   if (!(rgbaInterleaved instanceof Float16Array || rgbaInterleaved instanceof Float32Array )) {
     throw new TypeError("rgbaInterleaved must be Float16Array or Float32Array");
   }
@@ -280,4 +283,12 @@ function f32ToF16Bits(x) {
   const halfExp = e << 10;
   const halfMant = (mant >>> 13) + ((mant >>> 12) & 1); // simple RNE-ish
   return sign | halfExp | (halfMant & 0x03ff);
+}
+
+function u8tof16(u8) {
+  const res = new Float16Array(u8.length);
+  for (let i = 0; i < u8.length; i++) {
+    res[i] = u8[i] / 255;
+  }
+  return res;
 }

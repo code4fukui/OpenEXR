@@ -18,4 +18,4 @@ const imgdata16 = OpenEXR.decode(exrBytes);
 console.log(imgdata16);
 
 const exrBytes2 =  OpenEXR.encode(imgdata16);
-await Deno.writeFile("example.exr", exrBytes2);
+await Deno.writeFile("example2.exr", exrBytes2);
