@@ -1,6 +1,7 @@
 # OpenEXR
 
-a image encoder/decoder for OpenEXR (ZIP supported)
+- Minimal OpenEXR encoder/decoder with ZIP compression.
+- Supports raw float16 and float32 image buffers only.
 
 ## usage
 
@@ -36,3 +37,5 @@ await Deno.writeFile("example.exr", exrBytes2);
 
 ## reference
 
+- [OpenEXR](https://openexr.com/en/latest/)
+- [OpenEXR - Wikipedia](https://ja.wikipedia.org/wiki/OpenEXR)
