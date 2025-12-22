@@ -1,7 +1,8 @@
-// Pure JS minimal OpenEXR encoder (single-part scanline, RGBA FLOAT32)
-// compression: NONE / ZIPS / ZIP
+// Pure JS minimal OpenEXR encoder (single-part scanline, RGBA HALF)
+// compression: NONE(0) / ZIPS(2) / ZIP(3)
 //
-// Depends: ByteWriter.js (must provide: i32,u8,u64,cstr,bytes,finish,size)
+// Input: Float32Array RGBA interleaved (R,G,B,A)
+// Output: EXR bytes (Uint8Array) with channel order A,B,G,R planar
 
 import { ByteWriter } from "./ByteWriter.js";
 import { deflate } from "https://taisukef.github.io/zlib.js/es/deflate.js";
@@ -9,98 +10,90 @@ import { deflate } from "https://taisukef.github.io/zlib.js/es/deflate.js";
 const textEncoder = new TextEncoder();
 
 /**
- * Encode OpenEXR (single-part scanline, RGBA FLOAT32)
+ * Encode OpenEXR (single-part scanline, RGBA HALF/float16)
  * @param {number} width
  * @param {number} height
- * @param {Float32Array} rgbaInterleaved - length = width*height*4 (R,G,B,A)
+ * @param {Float16Array|Float32Array} rgbaInterleaved - length = width*height*4 (R,G,B,A)
  * @param {object} [opts]
  * @param {"NONE"|"ZIPS"|"ZIP"} [opts.compression="NONE"]
- * @returns {Uint8Array} .exr bytes
+ * @returns {Uint8Array}
  */
-export function encodeEXR_RGBA32F(width, height, rgbaInterleaved, opts = {}) {
+export function encodeEXR_RGBA16F(width, height, rgbaInterleaved, opts = {}) {
   const { compression = "ZIP" } = opts;
 
-  if (!(rgbaInterleaved instanceof Float32Array)) throw new TypeError("rgbaInterleaved must be Float32Array");
+  if (!(rgbaInterleaved instanceof Float16Array || rgbaInterleaved instanceof Float32Array )) {
+    throw new TypeError("rgbaInterleaved must be Float16Array or Float32Array");
+  }
   if (rgbaInterleaved.length !== width * height * 4) throw new RangeError("size mismatch");
-
-  // OpenEXR compression enum (scanline): NONE=0, ZIPS=2, ZIP=3
+  
+  // OpenEXR compression enum
   const compId =
     compression === "NONE" ? 0 :
     compression === "ZIPS" ? 2 :
     compression === "ZIP"  ? 3 :
     (() => { throw new Error("unknown compression"); })();
 
-  const blockLines = (compression === "ZIP") ? 16 : 1; // ZIP=16 lines, ZIPS=1 line
+  const blockLines = (compression === "ZIP") ? 16 : 1; // ZIP=16, ZIPS=1
 
-  // ---- Build header bytes first (so we can compute offsets cleanly) ----
-  const headerWriter = buildHeader(width, height, compId);
+  // Header bytes
+  const headerWriter = buildHeader_RGBA_HALF(width, height, compId);
   const headerBytes = headerWriter.finish();
   const headerEndPos = headerBytes.byteLength;
 
-  // ---- Offset table size: one offset per block ----
   const numBlocks = Math.ceil(height / blockLines);
   const offsetTableBytes = numBlocks * 8;
 
-  // ---- Generate blocks (chunks) ----
-  // Uncompressed scanline bytes (A,B,G,R planar float32)
-  const bytesPerSample = 4;
-  const scanlineDataBytes = width * 4 * bytesPerSample; // 4ch * float32
+  // sizes
+  const bytesPerSample = 2; // HALF
+  const scanlineDataBytes = width * 4 * bytesPerSample; // 4ch
   const maxUncompressedBlockBytes = scanlineDataBytes * blockLines;
 
   const blocks = new Array(numBlocks);
   const offsets = new BigUint64Array(numBlocks);
 
+  // work buffers (reuse to reduce GC)
+  const lineA = new Uint16Array(width);
+  const lineB = new Uint16Array(width);
+  const lineG = new Uint16Array(width);
+  const lineR = new Uint16Array(width);
+
   for (let bi = 0; bi < numBlocks; bi++) {
     const y0 = bi * blockLines;
     const lines = Math.min(blockLines, height - y0);
 
-    // Build uncompressed payload for this block (concatenate scanlines)
     const uncompressed = new Uint8Array(scanlineDataBytes * lines);
     let dst = 0;
 
     for (let ly = 0; ly < lines; ly++) {
       const y = y0 + ly;
-
-      // planar arrays for this scanline
-      const lineA = new Float32Array(width);
-      const lineB = new Float32Array(width);
-      const lineG = new Float32Array(width);
-      const lineR = new Float32Array(width);
-
       const rowBase = y * width * 4;
+
       for (let x = 0; x < width; x++) {
         const i = rowBase + x * 4;
-        lineR[x] = rgbaInterleaved[i + 0];
-        lineG[x] = rgbaInterleaved[i + 1];
-        lineB[x] = rgbaInterleaved[i + 2];
-        lineA[x] = rgbaInterleaved[i + 3];
+        lineR[x] = f32ToF16Bits(rgbaInterleaved[i + 0]);
+        lineG[x] = f32ToF16Bits(rgbaInterleaved[i + 1]);
+        lineB[x] = f32ToF16Bits(rgbaInterleaved[i + 2]);
+        lineA[x] = f32ToF16Bits(rgbaInterleaved[i + 3]);
       }
 
-      // A,B,G,R contiguous
-      uncompressed.set(new Uint8Array(lineA.buffer), dst); dst += width * 4;
-      uncompressed.set(new Uint8Array(lineB.buffer), dst); dst += width * 4;
-      uncompressed.set(new Uint8Array(lineG.buffer), dst); dst += width * 4;
-      uncompressed.set(new Uint8Array(lineR.buffer), dst); dst += width * 4;
+      // write A,B,G,R planar half bytes (little-endian)
+      uncompressed.set(new Uint8Array(lineA.buffer), dst); dst += width * 2;
+      uncompressed.set(new Uint8Array(lineB.buffer), dst); dst += width * 2;
+      uncompressed.set(new Uint8Array(lineG.buffer), dst); dst += width * 2;
+      uncompressed.set(new Uint8Array(lineR.buffer), dst); dst += width * 2;
     }
 
     let payload = uncompressed;
 
     if (compId === 2 || compId === 3) {
-      // ZIP/ZIPS transform: reorder -> predictor -> deflate
       const compressed = exrZipCompress(uncompressed, deflate);
-
-      // Important: if compression isn't smaller, store uncompressed payload instead
-      if (compressed.byteLength < uncompressed.byteLength) {
-        payload = compressed;
-      }
+      if (compressed.byteLength < uncompressed.byteLength) payload = compressed;
     } else {
-      // NONE: payload is uncompressed, and MUST match expected bytes
       if (uncompressed.byteLength > maxUncompressedBlockBytes) {
         throw new Error("internal: uncompressed block too large");
       }
     }
 
-    // chunk = y(int32) + dataSize(int32) + payload
     const bw = new ByteWriter();
     bw.i32(y0);
     bw.i32(payload.byteLength);
@@ -108,62 +101,44 @@ export function encodeEXR_RGBA32F(width, height, rgbaInterleaved, opts = {}) {
     blocks[bi] = bw.finish();
   }
 
-  // ---- Compute offsets ----
+  // offsets
   let runningOffset = BigInt(headerEndPos + offsetTableBytes);
   for (let i = 0; i < numBlocks; i++) {
     offsets[i] = runningOffset;
     runningOffset += BigInt(blocks[i].byteLength);
   }
 
-  // ---- Assemble final file ----
+  // final
   const out = new ByteWriter();
   out.bytes(headerBytes);
-
-  // offsets (u64 LE)
   for (let i = 0; i < numBlocks; i++) out.u64(offsets[i]);
-
-  // blocks
   for (const b of blocks) out.bytes(b);
-
   return out.finish();
 }
 
-/**
- * Back-compat name (your original function name) — defaults to NONE
- */
-export function encodeEXRUncompressedRGBA32F(width, height, rgbaInterleaved) {
-  return encodeEXR_RGBA32F(width, height, rgbaInterleaved, { compression: "NONE" });
-}
-
-// ---------- Header builder ----------
-function buildHeader(width, height, compId) {
+// ---------- Header (HALF) ----------
+function buildHeader_RGBA_HALF(width, height, compId) {
   const w = new ByteWriter();
 
-  // Magic number = 20000630 (int32 LE)
   w.i32(20000630);
-
-  // Version field (int32): version=2 + long names bit (0x400)
   w.i32(2 | 0x400);
 
-  // Required attributes
-  writeAttribute(w, "channels", "chlist", makeChListRGBA_FLOAT());
+  writeAttribute(w, "channels", "chlist", makeChListRGBA_HALF());
   writeAttribute(w, "compression", "compression", makeU8(compId));
 
   const box = makeBox2i(0, 0, width - 1, height - 1);
   writeAttribute(w, "dataWindow", "box2i", box);
   writeAttribute(w, "displayWindow", "box2i", box);
 
-  writeAttribute(w, "lineOrder", "lineOrder", makeU8(0));          // INCREASING_Y
+  writeAttribute(w, "lineOrder", "lineOrder", makeU8(0));
   writeAttribute(w, "pixelAspectRatio", "float", makeF32(1.0));
   writeAttribute(w, "screenWindowCenter", "v2f", makeV2f(0.0, 0.0));
   writeAttribute(w, "screenWindowWidth", "float", makeF32(1.0));
 
-  // end of header
   w.u8(0);
   return w;
 }
 
-// ---------- OpenEXR attribute helpers ----------
 function writeAttribute(w, name, type, valueBytes) {
   w.cstr(name);
   w.cstr(type);
@@ -199,10 +174,8 @@ function makeU8(v) {
   return Uint8Array.of(v & 255);
 }
 
-// chlist: sequence of channels + terminating 0x00
-function makeChListRGBA_FLOAT() {
-  // Pixel data stores channels in alphabetical order by name.
-  // For RGBA, that order is: A, B, G, R.
+// chlist for HALF: pixelType = 1
+function makeChListRGBA_HALF() {
   const channels = ["A", "B", "G", "R"];
   const parts = [];
   let total = 0;
@@ -211,18 +184,14 @@ function makeChListRGBA_FLOAT() {
     const nameBytes = textEncoder.encode(name);
     parts.push(nameBytes, Uint8Array.of(0)); total += nameBytes.byteLength + 1;
 
-    // pixel type (int): FLOAT = 2
+    // pixel type (int): HALF = 1
     const bType = new ArrayBuffer(4);
-    new DataView(bType).setInt32(0, 2, true);
+    new DataView(bType).setInt32(0, 1, true);
     parts.push(new Uint8Array(bType)); total += 4;
 
-    // pLinear (u8): 0/1 (we set 1)
-    parts.push(Uint8Array.of(1)); total += 1;
+    parts.push(Uint8Array.of(1)); total += 1;          // pLinear
+    parts.push(Uint8Array.of(0, 0, 0)); total += 3;     // reserved
 
-    // reserved (3 bytes)
-    parts.push(Uint8Array.of(0, 0, 0)); total += 3;
-
-    // xSampling (int), ySampling (int)
     const bS = new ArrayBuffer(8);
     const dvS = new DataView(bS);
     dvS.setInt32(0, 1, true);
@@ -238,7 +207,7 @@ function makeChListRGBA_FLOAT() {
   return out;
 }
 
-// ---------- ZIP/ZIPS transform (reorder + predictor + zlib deflate) ----------
+// ---------- ZIP/ZIPS transform ----------
 function exrZipCompress(uncompressedU8, deflate) {
   const reordered = exrZipReorder(uncompressedU8);
   const predicted = exrZipPredictor(reordered);
@@ -265,4 +234,50 @@ function exrZipPredictor(u8) {
     out[i] = d;
   }
   return out;
+}
+
+// ---------- float32 -> float16 bits ----------
+const _f32 = new Float32Array(1);
+const _u32 = new Uint32Array(_f32.buffer);
+
+/**
+ * Convert JS number (float32) to IEEE-754 half float bits (uint16).
+ * Handles NaN/Inf/denormals reasonably.
+ */
+function f32ToF16Bits(x) {
+  _f32[0] = x;
+  const f = _u32[0];
+
+  const sign = (f >>> 16) & 0x8000;
+  const exp  = (f >>> 23) & 0xff;
+  const mant = f & 0x7fffff;
+
+  // NaN / Inf
+  if (exp === 0xff) {
+    if (mant === 0) return sign | 0x7c00;           // Inf
+    return sign | 0x7c00 | (mant ? 0x0200 : 0);     // NaN (quiet)
+  }
+
+  // Convert exponent from bias 127 to bias 15
+  const e = exp - 127 + 15;
+
+  // Underflow -> subnormal or zero
+  if (e <= 0) {
+    if (e < -10) return sign; // too small -> 0
+    // subnormal: mantissa with implicit leading 1
+    const m = mant | 0x800000;
+    const shift = 1 - e;
+    // round to nearest even
+    const halfMant = (m >>> (shift + 13)) + ((m >>> (shift + 12)) & 1);
+    return sign | (halfMant & 0x03ff);
+  }
+
+  // Overflow -> Inf
+  if (e >= 31) return sign | 0x7c00;
+
+  // Normalized
+  // round mantissa: take top 10 bits, with rounding
+  const halfExp = e << 10;
+  const halfMant = (mant >>> 13) + ((mant >>> 12) & 1); // simple RNE-ish
+  return sign | halfExp | (halfMant & 0x03ff);
 }

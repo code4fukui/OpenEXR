@@ -1,11 +1,11 @@
-import { encodeEXR_RGBA32F } from "./encodeEXR.js";
-import { decodeEXR_RGBA32F } from "./decodeEXR.js";
+import { encodeEXR_RGBA16F } from "./encodeEXR16.js";
+import { decodeEXR_RGBA16F } from "./decodeEXR16.js";
 
 export class OpenEXR {
   static encode(imagedataf32) {
-    return encodeEXR_RGBA32F(imagedataf32.width, imagedataf32.height, imagedataf32.data);
+    return encodeEXR_RGBA16F(imagedataf32.width, imagedataf32.height, imagedataf32.data);
   }
   static decode(bin) {
-    return decodeEXR_RGBA32F(bin);
+    return decodeEXR_RGBA16F(bin);
   }
 }
