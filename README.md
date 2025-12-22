@@ -21,10 +21,10 @@ const exrBytes = OpenEXR.encode({ width: w, height: h, data: rgba });
 await Deno.writeFile("example.exr", exrBytes);
 
 // decode
-const { width, height, rgba: back } = OpenEXR.decode(exrBytes);
-console.log(width, height, back);
+const imgdata16 = OpenEXR.decode(exrBytes);
+console.log(imgdata16);
 
-const exrBytes2 =  OpenEXR.encode({ width, height, data: back });
+const exrBytes2 =  OpenEXR.encode(imgdata16);
 await Deno.writeFile("example.exr", exrBytes2);
 ```
 - use OpenEXR32.js for Float32 encoding

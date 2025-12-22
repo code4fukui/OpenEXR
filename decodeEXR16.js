@@ -134,7 +134,7 @@ export function decodeEXR_RGBA16F(exrBytes) {
     }
   }
 
-  return { width, height, rgba: out, compression };
+  return { width, height, data: out };
 
   function parseBox2i(u8) {
     const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
