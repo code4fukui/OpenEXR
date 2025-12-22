@@ -32,8 +32,8 @@ await Deno.writeFile("example.exr", exrBytes2);
 
 ## memo
 
-- f32 NO_COMPRESSION 935KB, ZIP 235KB
-- f16 NO_COMPRESSION 464KB, ZIP 46KB
+- f32 NO_COMPRESSION 935KB, ZIP 235KB (320x180)
+- f16 NO_COMPRESSION 464KB, ZIP 46KB  (320x180)
 
 ## reference
 
