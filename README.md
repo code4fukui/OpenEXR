@@ -6,7 +6,7 @@
 ## usage
 
 ```js
-import { OpenEXR } from "./OpenEXR.js";
+import { OpenEXR } from "https://code4fukui.github.io/OpenEXR/OpenEXR.js";
 
 // encode
 const w = 320;
