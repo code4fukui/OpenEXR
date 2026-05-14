@@ -1,10 +1,8 @@
 # OpenEXR
 
-> 日本語のREADMEはこちらです: [README.ja.md](README.ja.md)
+ZIP圧縮をサポートする最小限のOpenEXRエンコーダ/デコーダです。raw float16およびfloat32の画像バッファのみに対応しています。
 
-Minimal OpenEXR encoder/decoder with ZIP compression. Supports raw float16 and float32 image buffers only.
-
-## Usage
+## 使い方
 
 ```js
 import { OpenEXR } from "https://code4fukui.github.io/OpenEXR/OpenEXR.js";
@@ -29,18 +27,18 @@ console.log(imgdata16);
 const exrBytes2 =  OpenEXR.encode(imgdata16);
 await Deno.writeFile("example2.exr", exrBytes2);
 ```
-- use OpenEXR32.js for Float32 encoding
+- Float32のエンコードにはOpenEXR32.jsを使用してください
 
-## Memo
+## メモ
 
 - f32 NO_COMPRESSION 935KB, ZIP 235KB (320x180)
 - f16 NO_COMPRESSION 464KB, ZIP 46KB  (320x180)
 
-## Reference
+## 参考
 
 - [OpenEXR](https://openexr.com/en/latest/)
 - [OpenEXR - Wikipedia](https://ja.wikipedia.org/wiki/OpenEXR)
 
-## License
+## ライセンス
 
-MIT License — see [LICENSE](LICENSE).
+MIT License — 詳細は [LICENSE](LICENSE) を参照してください。
